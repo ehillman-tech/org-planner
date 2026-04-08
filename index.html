@@ -786,6 +786,9 @@ select.input {
       <button onclick="zoomIn()"   class="chart-toolbar__btn">+</button>
       <button onclick="zoomOut()"  class="chart-toolbar__btn">&#x2212;</button>
       <button onclick="fitChart()" class="chart-toolbar__btn chart-toolbar__btn--label">Fit</button>
+      <select id="chart-dept" onchange="renderChart()" class="input input--sm" style="width:190px;margin-left:8px;">
+        <option value="">All Departments</option>
+      </select>
     </div>
     <div id="chart-legend" class="chart-legend"></div>
     <div class="chart-bg">
@@ -1320,7 +1323,12 @@ function initZoom() {
 }
 
 function renderChart() {
-  const ps=people(), td=buildTree(ps);
+  const ds=document.getElementById('chart-dept'), cur=ds.value;
+  ds.innerHTML='<option value="">All Departments</option>'+depts().map(d=>`<option${d===cur?' selected':''}>${d}</option>`).join('');
+
+  let ps=people();
+  if(cur) ps=ps.filter(p=>p.dept===cur);
+  const td=buildTree(ps);
   const ll=d3.select('#links-layer'), nl=d3.select('#nodes-layer');
   if(!td){ll.selectAll('*').remove();nl.selectAll('*').remove();return;}
   const root=d3.hierarchy(td);
