@@ -924,33 +924,37 @@ select.input {
 
 <!-- IMPORT MODAL -->
 <div id="import-modal" class="overlay overlay--hidden">
-  <div class="modal">
+  <div class="modal modal--tall" style="max-width:460px;">
     <div class="modal__head">
       <h2 class="modal__title">Import data</h2>
       <button onclick="closeImportModal()" class="modal__close">&#x2715;</button>
     </div>
-    <div class="drop-zone" onclick="document.getElementById('file-input').click()">
-      <svg class="drop-zone__icon" viewBox="0 0 36 40" fill="none">
-        <rect x="1" y="1" width="24" height="32" rx="2" stroke="#000" stroke-width="1.5"/>
-        <path d="M13 1v12h12" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/>
-        <path d="M7 21h10M7 26h7" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <p class="drop-zone__label">Select file to import</p>
-      <p class="drop-zone__hint">CSV or JSON</p>
-      <input type="file" id="file-input" accept=".csv,.json" style="display:none" onchange="handleFileImport(event)">
-    </div>
-    <p class="field__label" style="margin-top:16px;margin-bottom:4px">CSV format</p>
-    <div class="code-block">
-      name,title,dept,level,salary,status,managerName<br>
-      Sarah Chen,CEO,Leadership,C-Suite,450000,filled,<br>
-      Marcus Johnson,CTO,Engineering,C-Suite,380000,filled,Sarah Chen
-    </div>
-    <div id="import-preview" style="display:none;margin-top:16px">
-      <p class="field__label" style="margin-bottom:4px">Preview</p>
-      <div id="import-preview-body" class="preview-box"></div>
-      <div class="radio-row">
-        <label class="radio-label"><input type="radio" name="import-mode" value="replace" checked> Replace current</label>
-        <label class="radio-label"><input type="radio" name="import-mode" value="merge"> Merge</label>
+    <div class="modal__body" style="padding:24px 32px;display:flex;flex-direction:column;gap:16px;">
+      <div class="drop-zone" onclick="document.getElementById('file-input').click()">
+        <svg class="drop-zone__icon" viewBox="0 0 36 40" fill="none">
+          <rect x="1" y="1" width="24" height="32" rx="2" stroke="#000" stroke-width="1.5"/>
+          <path d="M13 1v12h12" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M7 21h10M7 26h7" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <p class="drop-zone__label">Select file to import</p>
+        <p class="drop-zone__hint">CSV or JSON</p>
+        <input type="file" id="file-input" accept=".csv,.json" style="display:none" onchange="handleFileImport(event)">
+      </div>
+      <div>
+        <p class="field__label" style="margin-bottom:4px">CSV format</p>
+        <div class="code-block">
+          name,title,dept,level,salary,status,managerName<br>
+          Sarah Chen,CEO,Leadership,C-Suite,450000,filled,<br>
+          Marcus Johnson,CTO,Engineering,C-Suite,380000,filled,Sarah Chen
+        </div>
+      </div>
+      <div id="import-preview" style="display:none;">
+        <p class="field__label" style="margin-bottom:4px">Preview</p>
+        <div id="import-preview-body" class="preview-box"></div>
+        <div class="radio-row">
+          <label class="radio-label"><input type="radio" name="import-mode" value="replace" checked> Replace current</label>
+          <label class="radio-label"><input type="radio" name="import-mode" value="merge"> Merge</label>
+        </div>
       </div>
     </div>
     <div class="modal__foot">
@@ -1476,16 +1480,67 @@ function handleFileImport(e){
   };
   reader.readAsText(file);
 }
+function parseCSVLine(line){
+  // Handles quoted fields with commas inside
+  const result=[]; let cur='', inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){inQ=!inQ;}
+    else if(c===','&&!inQ){result.push(cur.trim());cur='';}
+    else{cur+=c;}
+  }
+  result.push(cur.trim());
+  return result;
+}
+function levelFromTitle(title){
+  const t=(title||'').toLowerCase();
+  if(/\bchief\b|^ceo$|^coo$|^cfo$|^cto$|^cpo$/.test(t)) return 'C-Suite';
+  if(/\bvp\b|vice president/.test(t)) return 'VP';
+  if(/\bdirector\b/.test(t)) return 'Director';
+  if(/senior manager|sr\.? manager/.test(t)) return 'Senior Manager';
+  if(/\bmanager\b/.test(t)) return 'Manager';
+  if(/\bsenior\b|sr\.?\s/.test(t)) return 'Senior';
+  if(/\bintern\b/.test(t)) return 'Intern';
+  if(/associate|coordinator|specialist|assistant/.test(t)) return 'Junior';
+  return 'Mid';
+}
 function parseCSV(text){
   const lines=text.trim().split('\n');
-  const headers=lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/["\r]/g,''));
-  return lines.slice(1).filter(l=>l.trim()).map((line,i)=>{
-    const vals=line.split(',').map(v=>v.trim().replace(/^"|"$|\r/g,''));
+  const rawHeaders=parseCSVLine(lines[0]);
+  const headers=rawHeaders.map(h=>h.toLowerCase().replace(/["\r]/g,'').trim());
+
+  // Detect JRB roster format by checking for 'employee' or 'employment status' columns
+  const isJRB = headers.includes('employee') || headers.includes('employment status');
+
+  const rows=lines.slice(1).filter(l=>l.trim()).map((line,i)=>{
+    const vals=parseCSVLine(line).map(v=>v.replace(/^"|"$|\r/g,'').trim());
     const r=Object.fromEntries(headers.map((h,j)=>[h,vals[j]||'']));
-    return{id:r.id||uid(),name:r.name||`Person ${i+1}`,title:r.title||'',dept:r.dept||r.department||'General',
-      level:r.level||'Mid',salary:parseFloat(r.salary)||0,status:r.status==='open'?'open':'filled',
+
+    if(isJRB){
+      // JRB roster column mapping
+      const empStatus=(r['employment status']||'').toLowerCase();
+      if(empStatus==='terminated') return null; // skip terminated
+      const name=r['employee']||`Person ${i+1}`;
+      const salary=parseFloat((r['annual base compensation']||'').replace(/[^0-9.]/g,''))||0;
+      return{
+        id:uid(), name, title:r['title']||'',
+        dept:r['department']||'General',
+        level:levelFromTitle(r['title']),
+        salary, status:'filled',
+        managerId:null, _mgr:r['manager']||''
+      };
+    }
+
+    // Standard format
+    return{id:r.id||uid(),name:r.name||`Person ${i+1}`,title:r.title||'',
+      dept:r.dept||r.department||'General',
+      level:r.level||levelFromTitle(r.title),
+      salary:parseFloat(r.salary)||0,
+      status:r.status==='open'?'open':'filled',
       managerId:null,_mgr:r.managername||r.manager_name||r.manager||''};
-  });
+  }).filter(Boolean);
+
+  return rows;
 }
 function parseJSON(text){
   const data=JSON.parse(text),arr=Array.isArray(data)?data:(data.people||[]);
