@@ -1332,9 +1332,30 @@ function seedData() {
   return raw;
 }
 
+// ── PRESET SCENARIOS ──────────────────────────────────────────────
+function buildRestructureScenario() {
+  const ps = clone(seedData());
+  // 1. Demand Planning → Finance: Natalie Lopez reports to Bianca Polycarpe
+  const natalie = ps.find(p => p.id === 'e20');
+  if (natalie) natalie.managerId = 'e4';
+  // 2. Supply Chain (Ops) → CEO: Matthew Jadro reports to Dakota Plofker
+  const matthew = ps.find(p => p.id === 'e15');
+  if (matthew) matthew.managerId = 'e1';
+  // 3. Katherine Neglia: Director of Product Commercialization (packaging + product marketing)
+  const katie = ps.find(p => p.id === 'e23');
+  if (katie) {
+    katie.title = 'Director of Product Commercialization';
+    katie.dept = 'Product Commercialization';
+  }
+  return ps;
+}
+
 // ── INIT ──────────────────────────────────────────────────────────
 function init() {
-  state.scenarios=[{id:'s1',name:'Current State',people:seedData(),createdAt:new Date().toISOString()}];
+  state.scenarios=[
+    {id:'s1', name:'Current State',      people:seedData(),                  createdAt:new Date().toISOString()},
+    {id:'s2', name:'Restructure Concept',people:buildRestructureScenario(),  createdAt:new Date().toISOString()},
+  ];
   state.activeId='s1';
   initZoom();
   render();
