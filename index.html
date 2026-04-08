@@ -291,6 +291,85 @@ select.input {
 }
 .has-mouse .chart-toolbar__btn:hover { background: var(--color-warm-bg); color: var(--color-black); }
 
+.dept-picker {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+}
+.dept-picker__btn {
+  height: 32px;
+  padding-inline: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-btn);
+  background: var(--color-white);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-rest);
+  transition: background .15s, color .15s;
+}
+.dept-picker__btn--active {
+  background: #000;
+  color: #fff;
+  border-color: #000;
+}
+.dept-picker__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-hover);
+  min-width: 230px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-block: 8px;
+}
+.dept-picker__actions {
+  display: flex;
+  gap: 12px;
+  padding: 2px 12px 8px;
+  border-bottom: 1px solid var(--color-divider);
+  margin-bottom: 4px;
+}
+.dept-picker__action {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--color-gray);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.has-mouse .dept-picker__action:hover { color: #000; }
+.dept-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+.has-mouse .dept-picker__item:hover { background: var(--color-warm-bg); }
+.dept-picker__dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .chart-legend {
   position: absolute;
   top: 20px; left: 72px;
@@ -786,9 +865,13 @@ select.input {
       <button onclick="zoomIn()"   class="chart-toolbar__btn">+</button>
       <button onclick="zoomOut()"  class="chart-toolbar__btn">&#x2212;</button>
       <button onclick="fitChart()" class="chart-toolbar__btn chart-toolbar__btn--label">Fit</button>
-      <select id="chart-dept" onchange="renderChart()" class="input input--sm" style="width:190px;margin-left:8px;">
-        <option value="">All Departments</option>
-      </select>
+    </div>
+    <div class="dept-picker" id="dept-picker">
+      <button class="dept-picker__btn" id="dept-picker-btn" onclick="toggleDeptPicker(event)">
+        <span id="dept-picker-label">All Departments</span>
+        <span>▾</span>
+      </button>
+      <div class="dept-picker__panel" id="dept-picker-panel" style="display:none;"></div>
     </div>
     <div id="chart-legend" class="chart-legend"></div>
     <div class="chart-bg">
@@ -1255,6 +1338,13 @@ function init() {
   state.activeId='s1';
   initZoom();
   render();
+  document.addEventListener('click', e => {
+    const picker = document.getElementById('dept-picker');
+    if (picker && !picker.contains(e.target)) {
+      const panel = document.getElementById('dept-picker-panel');
+      if (panel) panel.style.display = 'none';
+    }
+  });
 }
 
 function render() {
@@ -1322,12 +1412,69 @@ function initZoom() {
   });
 }
 
-function renderChart() {
-  const ds=document.getElementById('chart-dept'), cur=ds.value;
-  ds.innerHTML='<option value="">All Departments</option>'+depts().map(d=>`<option${d===cur?' selected':''}>${d}</option>`).join('');
+let chartDeptFilter = new Set(); // empty = show all
 
+function toggleDeptPicker(e) {
+  e.stopPropagation();
+  const panel = document.getElementById('dept-picker-panel');
+  const isOpen = panel.style.display !== 'none';
+  if (isOpen) { panel.style.display = 'none'; return; }
+  populateDeptPicker();
+  panel.style.display = 'block';
+}
+function populateDeptPicker() {
+  const panel = document.getElementById('dept-picker-panel');
+  const allD = depts();
+  panel.innerHTML =
+    `<div class="dept-picker__actions">
+       <button class="dept-picker__action" onclick="deptPickerAll()">Select all</button>
+       <button class="dept-picker__action" onclick="deptPickerClear()">Clear</button>
+     </div>` +
+    allD.map(d => {
+      const checked = chartDeptFilter.size === 0 || chartDeptFilter.has(d);
+      return `<label class="dept-picker__item">
+        <input type="checkbox" ${checked?'checked':''} onchange="toggleDeptCheck('${d.replace(/'/g,"\\'")}',this.checked)" style="margin:0;cursor:pointer;">
+        <span class="dept-picker__dot" style="background:${deptColor(d)};"></span>
+        <span>${d}</span>
+      </label>`;
+    }).join('');
+}
+function toggleDeptCheck(dept, checked) {
+  const allD = depts();
+  if (chartDeptFilter.size === 0) {
+    // Was "all" — switch to explicit: all except unchecked one
+    if (!checked) { allD.forEach(d => chartDeptFilter.add(d)); chartDeptFilter.delete(dept); }
+  } else {
+    if (checked) {
+      chartDeptFilter.add(dept);
+      if (chartDeptFilter.size === allD.length) chartDeptFilter.clear(); // back to "all"
+    } else {
+      chartDeptFilter.delete(dept);
+      if (chartDeptFilter.size === 0) chartDeptFilter.clear(); // none left → show all
+    }
+  }
+  updateDeptPickerBtn();
+  renderChart();
+}
+function deptPickerAll() { chartDeptFilter.clear(); populateDeptPicker(); updateDeptPickerBtn(); renderChart(); }
+function deptPickerClear() { chartDeptFilter.clear(); depts().forEach(d=>chartDeptFilter.add(d)); chartDeptFilter.clear(); populateDeptPicker(); updateDeptPickerBtn(); renderChart(); }
+function updateDeptPickerBtn() {
+  const btn = document.getElementById('dept-picker-btn');
+  const lbl = document.getElementById('dept-picker-label');
+  if (chartDeptFilter.size === 0) {
+    lbl.textContent = 'All Departments';
+    btn.classList.remove('dept-picker__btn--active');
+  } else {
+    lbl.textContent = chartDeptFilter.size === 1
+      ? [...chartDeptFilter][0]
+      : `${chartDeptFilter.size} departments`;
+    btn.classList.add('dept-picker__btn--active');
+  }
+}
+
+function renderChart() {
   let ps=people();
-  if(cur) ps=ps.filter(p=>p.dept===cur);
+  if(chartDeptFilter.size>0) ps=ps.filter(p=>chartDeptFilter.has(p.dept));
   const td=buildTree(ps);
   const ll=d3.select('#links-layer'), nl=d3.select('#nodes-layer');
   if(!td){ll.selectAll('*').remove();nl.selectAll('*').remove();return;}
