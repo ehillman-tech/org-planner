@@ -881,6 +881,7 @@ select.input {
         <button onclick="saveEditPanel()" class="btn" style="flex:1">Save</button>
         <button onclick="addDirectReport()" class="btn btn--ghost" style="flex:1">+ Report</button>
       </div>
+      <button onclick="createTeamScenario()" class="btn btn--ghost" style="width:100%;font-size:10px;">Branch team scenario</button>
       <button onclick="deletePerson()" class="btn--text">Delete person</button>
     </div>
   </div>
@@ -984,6 +985,7 @@ let state = {
   tab:'chart', compareIds:[], pendingManagerId:null, importParsed:null,
 };
 let zoomBehavior=null, dragState=null, fitDone=false;
+let collapsedIds = new Set(); // ids whose children are hidden
 
 // ── DEPT COLORS (JRB palette: dark, muted, brand-aligned) ─────────
 const DEPT_COLORS = {
@@ -1085,8 +1087,25 @@ function buildTree(ps) {
     rootId='__vr__';
   }
   const map=Object.fromEntries(all.map(p=>[p.id,{...p}]));
-  function build(id){const n=map[id];if(!n)return null;const k=all.filter(p=>p.managerId===id).map(p=>build(p.id)).filter(Boolean);return{...n,children:k.length?k:undefined};}
+  function countDesc(id){
+    return all.filter(p=>p.managerId===id).reduce((a,p)=>a+1+countDesc(p.id),0);
+  }
+  function build(id){
+    const n=map[id]; if(!n) return null;
+    if(collapsedIds.has(id)){
+      // collapsed: attach _collapsedCount but no children
+      return {...n, _collapsedCount: countDesc(id)};
+    }
+    const k=all.filter(p=>p.managerId===id).map(p=>build(p.id)).filter(Boolean);
+    return{...n,children:k.length?k:undefined};
+  }
   return build(rootId);
+}
+
+function toggleCollapse(id) {
+  if(collapsedIds.has(id)) collapsedIds.delete(id);
+  else collapsedIds.add(id);
+  renderChart();
 }
 
 function initZoom() {
@@ -1122,9 +1141,40 @@ function renderChart() {
   const mg=nSel.merge(nE);
   mg.attr('transform',d=>`translate(${d.x},${d.y})`);
   mg.on('click',(e,d)=>{e.stopPropagation();selectPerson(d.data.id);});
+  mg.on('dblclick',(e,d)=>{e.stopPropagation();if(d.data._v)return;toggleCollapse(d.data.id);});
   mg.select('rect.bg')
     .attr('stroke',d=>d.data.id===state.selectedId?'#000':'#dedad3')
     .attr('stroke-width',d=>d.data.id===state.selectedId?1.5:1);
+
+  // Collapse badge — remove old, add new
+  nl.selectAll('.collapse-badge').remove();
+  nd.filter(d=>d.data._collapsedCount>0).each(function(d){
+    const g=nl.append('g').attr('class','collapse-badge')
+      .attr('transform',`translate(${d.x},${d.y})`)
+      .style('cursor','pointer')
+      .on('click',(e)=>{e.stopPropagation();toggleCollapse(d.data.id);});
+    const bw=36, bh=18, bx=NW/2-bw/2, by=NH/2-1;
+    g.append('rect').attr('x',bx).attr('y',by).attr('width',bw).attr('height',bh).attr('rx',9)
+      .attr('fill','#000');
+    g.append('text').attr('x',bx+bw/2).attr('y',by+12).attr('text-anchor','middle')
+      .attr('font-family','BaseMonoWideWeb,Courier,Courier New,sans-serif')
+      .attr('font-size',9).attr('fill','#fff').attr('letter-spacing','.3')
+      .text(`+${d.data._collapsedCount}`);
+  });
+
+  // Collapse toggle button on nodes that have children or are collapsed
+  nl.selectAll('.collapse-toggle').remove();
+  nd.filter(d=>!d.data._v && (d.children || collapsedIds.has(d.data.id))).each(function(d){
+    const isCol=collapsedIds.has(d.data.id);
+    const g=nl.append('g').attr('class','collapse-toggle')
+      .attr('transform',`translate(${d.x + NW/2 - 12},${d.y - NH/2 + 6})`)
+      .style('cursor','pointer')
+      .on('click',(e)=>{e.stopPropagation();toggleCollapse(d.data.id);});
+    g.append('circle').attr('r',9).attr('fill','#fff').attr('stroke','#dedad3').attr('stroke-width',1);
+    g.append('text').attr('text-anchor','middle').attr('y',4)
+      .attr('font-size',13).attr('fill','#000')
+      .text(isCol?'+':'−');
+  });
 
   setupDrag(); renderLegend();
   if(!fitDone){fitDone=true;setTimeout(fitChart,50);}
@@ -1361,7 +1411,7 @@ function renderScenarios(){
       <div class="sc-card__header">
         <div>
           <div class="sc-card__name">${s.name}</div>
-          <div class="sc-card__date">${new Date(s.createdAt).toLocaleDateString()}</div>
+          <div class="sc-card__date">${new Date(s.createdAt).toLocaleDateString()}${s._teamRootName?` &middot; Team: ${s._teamRootName}`:''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           ${isA?'<span class="active-tag">Active</span>':''}
@@ -1386,6 +1436,27 @@ function createScenario(){
   const name=prompt('Scenario name:','Scenario '+(state.scenarios.length+1)); if(!name) return;
   state.scenarios.push({id:'s'+Date.now(),name,people:clone(activeSc().people),createdAt:new Date().toISOString()});
   renderScenarios();
+}
+
+function createTeamScenario(){
+  if(!state.selectedId) return;
+  const root=byId(state.selectedId); if(!root) return;
+  // Grab root person + all their descendants
+  const teamIds=new Set([state.selectedId,...desc(state.selectedId)]);
+  const teamPeople=clone(activeSc().people.filter(p=>teamIds.has(p.id)));
+  // Make the selected person a root (no manager) in the new scenario
+  const rootPerson=teamPeople.find(p=>p.id===state.selectedId);
+  if(rootPerson) rootPerson.managerId=null;
+  const defaultName=`${root.name}'s Team`;
+  const name=prompt('Team scenario name:',defaultName); if(!name) return;
+  state.scenarios.push({
+    id:'s'+Date.now(), name,
+    people:teamPeople,
+    createdAt:new Date().toISOString(),
+    _teamRoot:state.selectedId,
+    _teamRootName:root.name,
+  });
+  switchTab('scenarios');
 }
 function activateScenario(id){
   state.activeId=id; state.selectedId=null; fitDone=false; closeEditPanel();
